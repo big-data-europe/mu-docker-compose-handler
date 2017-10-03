@@ -5,11 +5,8 @@ class Stack():
     have them
     """
     def __init__(self, data):
-        assert "location" in data
         assert "app" in data
         self._app = data["app"]
-        self._location = data["location"]
-    
 
     @property
     def app(self):

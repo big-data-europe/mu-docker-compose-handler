@@ -1,6 +1,8 @@
 import logging
 import asyncio
 import subprocess
+import jsonapi_requests
+from uuid import uuid1
 from aiofiles import open
 from os import path, environ as ENV
 from aiohttp import web
@@ -97,7 +99,7 @@ class Application(web.Application):
         return web.Response(text="all good")
 
 
-    async def ensure_stack_has_drc(self, uri: str) -> bool:
+    async def ensure_stack_has_drc(self, uuid: str) -> bool:
         """
         Return True if the Stack has already a docker-compose.yml
         file associated and False otherwise.
@@ -109,21 +111,37 @@ class Application(web.Application):
         """
         result = await self.sparql.query("""
             ASK FROM {{graph}} WHERE { 
-                <%s> <http://swarmui.semte.ch/vocabularies/core/dockerComposeFile> ?o 
+                ?s <http://mu.semte.ch/vocabularies/core/uuid> {{}} .
+                ?s <http://swarmui.semte.ch/vocabularies/core/dockerComposeFile> ?x .
             }
-            """ % uri)
+            """, escape_string(uuid))
         return result['boolean']
 
 
     async def create_drc_db(self, drc: str, stack: Stack) -> str:
         """
         Create the DockerCompose model in the db using a POST request,
-        and update
+        and update the Stack to point to it.
 
         Arguments:
             drc: string with the docker-compose file contents
             stack: Stack to link the DockerCompose to
         """
+        api = jsonapi_requests.Api.config({
+            'API_ROOT': ENV['MU_RESOURCE_ENDPOINT'],
+            'VALIDATE_SSL': False,
+            'TIMEOUT': 10,
+        })
+        endpoint = api.endpoint('docker-composes')
+        endpoint.post(object=jsonapi_requests.JsonApiObject(
+            attributes={
+                'title': "stack_{}_drc_{}".format(stack.uuid, uuid1().hex), 
+                'text': drc 
+            },
+            type='docker-composes'))
+
+        # TODO: Update the Stack with the new DRC's uri
+
 
 
     async def docker_compose(self, stack: Stack):
@@ -141,13 +159,13 @@ class Application(web.Application):
         # same for gitlab, aws codecommit, if we manage to somehow know
         # the urls to query from the git url, we can leap over cloning 
         # the repo
-        uri = await stack.uri
-        if not await self.ensure_stack_has_drc(uri):
-            project_path = "/data/{}".format(uri.split('/')[-1])   
+        uuid = stack.uuid
+        if not await self.ensure_stack_has_drc(uuid):
+            project_path = "/data/{}".format(uuid)   
             cmd = await self.run_command(
                 "git", 
                 "clone", 
-                stack.location, 
+                await stack.location, 
                 "-b", 
                 stack.branch, 
                 project_path)
