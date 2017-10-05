@@ -94,7 +94,8 @@ class Application(web.Application):
         data.update({ 'app': self })
         stack = UUIDStack(data)
         docker_compose = await self.docker_compose(stack)
-        response = await self.create_drc_db(docker_compose, stack)
+        post_response = await self.create_drc_db(docker_compose, stack)
+        patch_response = await self.update_stack_drc(post_response.data.id, stack)
 
         return web.Response(text="all good")
 
@@ -141,14 +142,24 @@ class Application(web.Application):
                 'text': drc 
             },
             type='docker-composes'))
+
+        return ret
+
+    async def update_stack_drc(self, drc_uuid: str, stack: Stack) -> str:
         
         # Update the link of the Stack with the new DockerCompose
-        docker_compose_uuid = ret.data.id
+        # docker_compose_uuid = ret.data.id
+        api = jsonapi_requests.Api.config({
+            'API_ROOT': ENV['MU_RESOURCE_ENDPOINT'],
+            'VALIDATE_SSL': False,
+            'TIMEOUT': 10,
+        })
+
         icon = await stack.icon
         title = await stack.title
         location = await stack.location
         patch_endpoint = api.endpoint("stacks/{}".format(stack.uuid))
-        patch_endpoint.patch(object=jsonapi_requests.JsonApiObject(
+        ret = patch_endpoint.patch(object=jsonapi_requests.JsonApiObject(
             attributes={
                 "icon": icon,
                 "title": title,
@@ -159,11 +170,12 @@ class Application(web.Application):
             relationships={
                 "docker-file": {
                     "data": {
-                        "id": docker_compose_uuid,
+                        "id": drc_uuid,
                         "type": "docker-composes"
                     }
                 }
             }))
+        return ret
 
 
 
