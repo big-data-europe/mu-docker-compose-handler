@@ -132,15 +132,38 @@ class Application(web.Application):
             'VALIDATE_SSL': False,
             'TIMEOUT': 10,
         })
-        endpoint = api.endpoint('docker-composes')
-        endpoint.post(object=jsonapi_requests.JsonApiObject(
+        post_endpoint = api.endpoint('docker-composes')
+        
+        # Create the DockerCompose model
+        ret = post_endpoint.post(object=jsonapi_requests.JsonApiObject(
             attributes={
                 'title': "stack_{}_drc_{}".format(stack.uuid, uuid1().hex), 
                 'text': drc 
             },
             type='docker-composes'))
-
-        # TODO: Update the Stack with the new DRC's uri
+        
+        # Update the link of the Stack with the new DockerCompose
+        docker_compose_uuid = ret.data.id
+        icon = await stack.icon
+        title = await stack.title
+        location = await stack.location
+        patch_endpoint = api.endpoint("stacks/{}".format(stack.uuid))
+        patch_endpoint.patch(object=jsonapi_requests.JsonApiObject(
+            attributes={
+                "icon": icon,
+                "title": title,
+                "location": location
+            },
+            id=stack.uuid,
+            type="stacks",
+            relationships={
+                "docker-file": {
+                    "data": {
+                        "id": docker_compose_uuid,
+                        "type": "docker-composes"
+                    }
+                }
+            }))
 
 
 
