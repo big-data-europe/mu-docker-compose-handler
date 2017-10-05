@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import subprocess
+import json
 import jsonapi_requests
 from uuid import uuid1
 from aiofiles import open
@@ -96,8 +97,14 @@ class Application(web.Application):
         docker_compose = await self.docker_compose(stack)
         post_response = await self.create_drc_db(docker_compose, stack)
         patch_response = await self.update_stack_drc(post_response.data.id, stack)
-
-        return web.Response(text="all good")
+        return web.Response(body=json.dumps({
+            "data": {
+                "attributes": {
+                    "status": 200,
+                    "message": "DockerCompose created and Stack updated"
+                },
+                "type": "mu-docker-compose-handler"
+            }}))
 
 
     async def ensure_stack_has_drc(self, uuid: str) -> bool:
