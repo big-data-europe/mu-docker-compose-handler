@@ -94,8 +94,8 @@ class Application(web.Application):
         data.update({ 'app': self })
         stack = UUIDStack(data)
         docker_compose = await self.docker_compose(stack)
-        post_response = await self.create_drc_db(docker_compose, stack)
-        patch_response = await self.update_stack_drc(post_response.data.id, stack)
+        drc_uri = await self.create_drc_db(docker_compose, stack)
+        await self.update_stack_drc(drc_uri, stack)
         return web.Response(body=json.dumps({
             "data": {
                 "attributes": {
@@ -127,61 +127,66 @@ class Application(web.Application):
 
     async def create_drc_db(self, drc: str, stack: Stack) -> str:
         """
-        Create the DockerCompose model in the db using a POST request,
-        and update the Stack to point to it.
+        Create the DockerCompose model in the DB.
 
         Arguments:
             drc: string with the docker-compose file contents
-            stack: Stack to link the DockerCompose to
         """
-        api = jsonapi_requests.Api.config({
-            'API_ROOT': ENV['MU_RESOURCE_ENDPOINT'],
-            'VALIDATE_SSL': False,
-            'TIMEOUT': 10,
-        })
-        post_endpoint = api.endpoint('docker-composes')
-        
-        # Create the DockerCompose model
-        ret = post_endpoint.post(object=jsonapi_requests.JsonApiObject(
-            attributes={
-                'title': "stack_{}_drc_{}".format(stack.uuid, uuid1().hex), 
-                'text': drc 
-            },
-            type='docker-composes'))
+        drc_uuid = uuid1().hex
+        uri = "http://stack-builder.big-data-europe.eu/resources/docker-composes/{}".format(drc_uuid)
+        await self.sparql.update("""
+            PREFIX dct: <http://purl.org/dc/terms/>
+            PREFIX mu: <http://mu.semte.ch/vocabularies/core/>
+            PREFIX stackbuilder: <http://stackbuilder.semte.ch/vocabularies/core/>
+            INSERT DATA 
+            {
+                GRAPH {{graph}} {
+                    <{{uri}}> a stackbuilder:DockerCompose.
+                    <{{uri}}> mu:uuid {{drc_uuid}}.
+                    <{{uri}}> stackbuilder:text {{drc}}.
+                    <{{uri}}> dct:title {{title}}.
+                }
+            }
+            """,
+            uri=uri,
+            drc_uuid=escape_string(drc_uuid), 
+            drc=escape_string(drc), 
+            title=escape_string("stack_{}_drc_{}".format(stack.uuid, drc_uuid)))
+        return uri
 
-        return ret
 
-    async def update_stack_drc(self, drc_uuid: str, stack: Stack) -> str:
-        
-        # Update the link of the Stack with the new DockerCompose
-        # docker_compose_uuid = ret.data.id
-        api = jsonapi_requests.Api.config({
-            'API_ROOT': ENV['MU_RESOURCE_ENDPOINT'],
-            'VALIDATE_SSL': False,
-            'TIMEOUT': 10,
-        })
+    async def update_stack_drc(self, drc_uri: str, stack: Stack) -> str:
+        """
+        Update the link from the Stack -> DockerCompose model.abs
 
-        icon = await stack.icon
-        title = await stack.title
-        location = await stack.location
-        patch_endpoint = api.endpoint("stacks/{}".format(stack.uuid))
-        ret = patch_endpoint.patch(object=jsonapi_requests.JsonApiObject(
-            attributes={
-                "icon": icon,
-                "title": title,
-                "location": location
-            },
-            id=stack.uuid,
-            type="stacks",
-            relationships={
-                "docker-file": {
-                    "data": {
-                        "id": drc_uuid,
-                        "type": "docker-composes"
+        Arguments:
+            drc_uri: URI of the previously created DockerCompose
+            stack: Stack to link the DockerCompose.
+        """
+        stack_uri = "http://swarm-ui.big-data-europe.eu/resources/stacks/{}".format(stack.uuid)
+        return await self.sparql.update("""
+            PREFIX swarmui: <http://swarmui.semte.ch/vocabularies/core/>
+            DELETE {
+                GRAPH {{graph}} {
+                    <{{stack_uri}}> swarmui:dockerComposeFile ?s.
+                }
+            } 
+            WHERE {
+                GRAPH {{graph}} {
+                    OPTIONAL {     
+                        <{{stack_uri}}> swarmui:dockerComposeFile ?s.
                     }
                 }
-            }))
-        return ret
+            }; 
+            INSERT DATA 
+            {
+                GRAPH {{graph}} {
+                    <{{stack_uri}}> swarmui:dockerComposeFile <{{drc_uri}}>.
+                }
+            }
+        """, 
+        stack_uri=stack_uri,
+        drc_uri=drc_uri)
 
 
 
@@ -215,6 +220,8 @@ class Application(web.Application):
                                           'docker-compose.yml'), 
                                           mode='r') as f:
                     return await f.read()
+
+
 
     async def cleanup(self):
         """
