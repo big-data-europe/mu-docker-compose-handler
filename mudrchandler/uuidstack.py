@@ -60,7 +60,7 @@ class UUIDStack(Stack):
         Fetches the value of a predicate for the Stack for a
         given UUID
         """
-        logger.info("Fetching information for Stack UUID: {}".format(self.uuid))
+        logger.info("Fetching information for {} in Stack UUID: {}".format(predicate, self.uuid))
         result = await self.app.sparql.query(
             """
             SELECT DISTINCT ?o 
@@ -79,6 +79,6 @@ class UUIDStack(Stack):
             raise web.HTTPInternalServerError(body=json.dumps({
                 "status": 500,
                 "title": "Invalid UUID",
-                "detail": "A Stack with an unexistent UUID was tried to be accessed"
+                "detail": "A Stack with an unexistent UUID: {} and predicate: {} was tried to be accessed".format(self.uuid, predicate)
             }))
         return ret_value

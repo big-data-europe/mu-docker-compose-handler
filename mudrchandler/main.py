@@ -80,7 +80,6 @@ class Application(web.Application):
             entrypoint is:
             {
                 uuid: uuid of the stack.
-                location: git url of the stack
                 app: instance of the application
             }
 
