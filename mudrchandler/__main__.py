@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 loop = asyncio.get_event_loop()
 
 
-
 def pollAccumulate(count=0):
     """
     Poll the database until it is ready to answer queries
@@ -34,7 +33,7 @@ try:
 
     while not pollAccumulate():
         continue
-    
+
     web.run_app(app, port=(int(ENV['PORT']) if 'PORT' in ENV else None),
                 loop=loop)
 except (SystemExit, Exception):

@@ -1,17 +1,22 @@
-import logging
 import asyncio
-import subprocess
 import json
-import jsonapi_requests
+import logging
+import subprocess
+from os import environ as ENV
+from os import path
 from uuid import uuid1
+
+import jsonapi_requests
 from aiofiles import open
-from os import path, environ as ENV
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aiosparql.client import SPARQLClient
-from mudrchandler.uuidstack import UUIDStack
+from aiosparql.syntax import (IRI, RDF, Node, RDFTerm, Triples, escape_any,
+                              escape_string)
+
 from mudrchandler.stack import Stack
-from aiosparql.syntax import escape_any, escape_string, IRI, Node, RDF, RDFTerm, Triples
+from mudrchandler.uuidstack import UUIDStack
+from mudrchandler.uristack import URIStack
 
 logger = logging.getLogger(__name__)
 
@@ -94,17 +99,23 @@ class Application(web.Application):
         data.update({ 'app': self })
         stack = UUIDStack(data)
         docker_compose = await self.docker_compose(stack)
-        drc_uri = await self.create_drc_db(docker_compose, stack)
-        await self.update_stack_drc(drc_uri, stack)
-        return web.Response(body=json.dumps({
-            "data": {
-                "attributes": {
-                    "status": 200,
-                    "message": "DockerCompose created and Stack updated"
-                },
-                "type": "mu-docker-compose-handler"
-            }}))
-
+        try:
+            drc_uri = await self.create_drc_db(docker_compose, stack)
+            await self.update_stack_drc(drc_uri, stack)
+            return web.Response(body=json.dumps({
+                "data": {
+                    "attributes": {
+                        "status": 200,
+                        "message": "DockerCompose created and Stack updated"
+                    },
+                    "type": "mu-docker-compose-handler"
+                }}))
+        except AttributeError:
+            raise web.HTTPInternalServerError(body=json.dumps({
+                "status": 500,
+                "title": "Stack already has DockerCompose",
+                "detail": "Stack {} already has DockerCompose linked to it".format(stack.uuid)
+            }))
 
     async def ensure_stack_has_drc(self, uuid: str) -> bool:
         """
@@ -133,6 +144,7 @@ class Application(web.Application):
             drc: string with the docker-compose file contents
         """
         drc_uuid = uuid1().hex
+        stack_uuid = stack.uuid if isinstance(stack, UUIDStack) else await stack.uuid
         uri = "http://stack-builder.big-data-europe.eu/resources/docker-composes/{}".format(drc_uuid)
         await self.sparql.update("""
             PREFIX dct: <http://purl.org/dc/terms/>
@@ -151,7 +163,7 @@ class Application(web.Application):
             uri=uri,
             drc_uuid=escape_string(drc_uuid), 
             drc=escape_string(drc), 
-            title=escape_string("stack_{}_drc_{}".format(stack.uuid, drc_uuid)))
+            title=escape_string("stack_{}_drc_{}".format(stack_uuid, drc_uuid)))
         return uri
 
 
@@ -163,7 +175,8 @@ class Application(web.Application):
             drc_uri: URI of the previously created DockerCompose
             stack: Stack to link the DockerCompose.
         """
-        stack_uri = "http://swarm-ui.big-data-europe.eu/resources/stacks/{}".format(stack.uuid)
+        stack_uuid = stack.uuid if isinstance(stack, UUIDStack) else await stack.uuid        
+        stack_uri = "http://swarm-ui.big-data-europe.eu/resources/stacks/{}".format(stack_uuid)
         return await self.sparql.update("""
             PREFIX swarmui: <http://swarmui.semte.ch/vocabularies/core/>
             DELETE {
@@ -189,7 +202,6 @@ class Application(web.Application):
         drc_uri=drc_uri)
 
 
-
     async def docker_compose(self, stack: Stack):
         """
         Fetches the docker-compose.yml file from the git url.
@@ -205,7 +217,7 @@ class Application(web.Application):
         # same for gitlab, aws codecommit, if we manage to somehow know
         # the urls to query from the git url, we can leap over cloning 
         # the repo
-        uuid = stack.uuid
+        uuid = stack.uuid if isinstance(stack, UUIDStack) else await stack.uuid
         if not await self.ensure_stack_has_drc(uuid):
             project_path = "/data/{}".format(uuid)   
             cmd = await self.run_command(
@@ -222,6 +234,55 @@ class Application(web.Application):
                     return await f.read()
 
 
+    def stack_inserted(self, inserts):
+        """
+        Filters the list of deltas checking if any
+        triple of type Stack has been added, and
+        return it's URI in that case.
+        """
+        stack_uri = [elem['s']['value'] for elem in inserts 
+                    if elem['o']['value'] == "http://usefulinc.com/ns/doap#Stack" 
+                    and elem['p']['value'] == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"]
+
+        return stack_uri[0] if stack_uri else None
+
+
+    async def handle_delta_update(self, request):
+        """
+        Handle an update from the delta service, check if
+        that update correspond to a stack and if so, create the
+        DockerCompose and link it to the stack.
+        """
+        try:
+            data = await request.json()
+        except:
+            raise web.HTTPBadRequest(body="invalid json")
+
+        inserts = data['delta'][0]['inserts']
+        stack_uri = self.stack_inserted(inserts)
+
+        if stack_uri:
+            try:
+                stack = URIStack({ 'app': self, 'uri': stack_uri })
+                docker_compose = await self.docker_compose(stack)
+                drc_uri = await self.create_drc_db(docker_compose, stack)
+                await self.update_stack_drc(drc_uri, stack)
+                return web.Response(body=json.dumps({
+                    "data": {
+                        "attributes": {
+                            "status": 200,
+                            "message": "DockerCompose created and Stack updated"
+                        },
+                        "type": "mu-docker-compose-handler"
+                    }}))
+            except AttributeError:
+                raise web.HTTPInternalServerError(body=json.dumps({
+                    "status": 500,
+                    "title": "Stack already has DockerCompose",
+                    "detail": "Stack {} already has DockerCompose linked to it".format(stack.uuid)
+                }))                    
+        return web.Response(text="whatever")
+
 
     async def cleanup(self):
         """
@@ -233,4 +294,5 @@ class Application(web.Application):
 # Create a new application and set the routes to handle requests
 app = Application()
 app.router.add_post('/createdrc', app.handle_fetch_drc)
+app.router.add_post('/update', app.handle_delta_update)
 app.on_cleanup.append(app.cleanup)

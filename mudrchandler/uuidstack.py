@@ -14,7 +14,7 @@ class UUIDStack(Stack):
     only the UUID of the stack was provided.
     """
     def __init__(self, data):
-        super().__init__(data)
+        super(UUIDStack, self).__init__(data)
         assert isinstance(data, dict)
         assert "uuid" in data
         self._uuid = data["uuid"]
@@ -26,13 +26,14 @@ class UUIDStack(Stack):
         """
         return self._uuid
 
+    
     @property
     async def location(self):
         """
         Returns the location of the Stack
         """
         if not hasattr(self, "_location"):
-            self._location = await self.fetch_stack_value("http://usefulinc.com/ns/doap#location")
+            self._location = await Stack.fetch_stack_value(self, "http://usefulinc.com/ns/doap#location", self.uuid)
         return self._location
 
 
@@ -42,8 +43,9 @@ class UUIDStack(Stack):
         Returns the title of the Stack
         """
         if not hasattr(self, "_title"):
-            self._title = await self.fetch_stack_value("http://purl.org/dc/terms/title")
+            self._title = await Stack.fetch_stack_value(self, "http://purl.org/dc/terms/title", self.uuid)
         return self._title
+
 
     @property
     async def icon(self):
@@ -51,34 +53,5 @@ class UUIDStack(Stack):
         Returns the icon of the Stack
         """
         if not hasattr(self, "_icon"):
-            self._icon = await self.fetch_stack_value("https://www.w3.org/1999/xhtml/vocab#icon")
+            self._icon = await Stack.fetch_stack_value(self, "https://www.w3.org/1999/xhtml/vocab#icon", self.uuid)
         return self._icon
-
-
-    async def fetch_stack_value(self, predicate: str) -> str:
-        """
-        Fetches the value of a predicate for the Stack for a
-        given UUID
-        """
-        logger.info("Fetching information for {} in Stack UUID: {}".format(predicate, self.uuid))
-        result = await self.app.sparql.query(
-            """
-            SELECT DISTINCT ?o 
-            FROM {{graph}}
-            WHERE {
-            ?s a <http://usefulinc.com/ns/doap#Stack> .
-            ?s <http://mu.semte.ch/vocabularies/core/uuid> {{uuid}} .
-            ?s <%s> ?o . 
-            }
-            """ % predicate,
-            uuid=escape_string(self.uuid)
-        )
-        try:
-            ret_value = result['results']['bindings'][0]['o']['value']
-        except IndexError:
-            raise web.HTTPInternalServerError(body=json.dumps({
-                "status": 500,
-                "title": "Invalid UUID",
-                "detail": "A Stack with an unexistent UUID: {} and predicate: {} was tried to be accessed".format(self.uuid, predicate)
-            }))
-        return ret_value
