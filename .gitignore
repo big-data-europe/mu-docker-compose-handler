@@ -1,2 +1,4 @@
 mudrchandler/__pycache__/
+mudrchandler.egg-info/
 __pycache__/
+.tox/

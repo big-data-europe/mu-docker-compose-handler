@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# [ -n "$TOX" ] && pip install tox
+[ -n "$TOX" ] && pip install tox
 
 [ -n "$1" ] && exec "$@"
 
